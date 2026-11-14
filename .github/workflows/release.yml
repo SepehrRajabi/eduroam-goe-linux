@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Test & vulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
+          go-package: ./...
+
+  build:
+    name: Build (${{ matrix.goarch }}${{ matrix.goarm && format('v{0}', matrix.goarm) || '' }})
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goarch: amd64 }
+          - { goarch: arm64 }
+          - { goarch: "386" }
+          - { goarch: arm, goarm: "7" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build and package
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          arch="$GOARCH${GOARM:+v$GOARM}"
+          name="eduroam-installer_${TAG}_linux_${arch}"
+          mkdir -p "dist/$name"
+          go build -trimpath -ldflags "-s -w -X main.version=${TAG}" \
+            -o "dist/$name/eduroam-installer" ./cmd/eduroam-installer
+          cp LICENSE NOTICE README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+      - name: Smoke test
+        if: matrix.goarch == 'amd64'
+        run: |
+          ./dist/*/eduroam-installer --version | grep -F "${{ github.ref_name }}"
+          ./dist/*/eduroam-installer --list-backends
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.goarch }}${{ matrix.goarm }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # actions/checkout does not fetch annotated tag objects reliably.
+      - run: git fetch --force --tags origin
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: dist-*
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+      - name: Changelog
+        run: |
+          scripts/changelog.sh "${{ github.ref_name }}" > CHANGELOG.md
+          {
+            echo
+            echo "### Verify"
+            echo
+            echo '```sh'
+            echo 'sha256sum -c --ignore-missing SHA256SUMS'
+            echo '```'
+          } >> CHANGELOG.md
+          cat CHANGELOG.md
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          prerelease=""
+          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
+            --title "$TAG" --notes-file CHANGELOG.md --verify-tag $prerelease
