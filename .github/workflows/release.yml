@@ -12,8 +12,8 @@ jobs:
     name: Test & vulncheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: go vet ./...
@@ -35,8 +35,8 @@ jobs:
           - { goarch: "386" }
           - { goarch: arm, goarm: "7" }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Build and package
@@ -59,7 +59,7 @@ jobs:
         run: |
           ./dist/*/eduroam-installer --version | grep -F "${{ github.ref_name }}"
           ./dist/*/eduroam-installer --list-backends
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.goarch }}${{ matrix.goarm }}
           path: dist/*.tar.gz
@@ -72,12 +72,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # actions/checkout does not fetch annotated tag objects reliably.
       - run: git fetch --force --tags origin
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: dist-*
